@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">CodePad</string>
+    <string name="title_activity_main">CodePad</string>
+    <string name="package_name">com.codepad.app</string>
+    <string name="custom_url_scheme">com.codepad.app</string>
+</resources>

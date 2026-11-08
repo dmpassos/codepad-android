@@ -1,0 +1,12 @@
+node_modules/
+.DS_Store
+.idea/
+*.iml
+*.apk
+*.aab
+*.keystore
+*.jks
+local.properties
+google-services.json
+build/
+.gradle/
