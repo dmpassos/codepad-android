@@ -3580,6 +3580,11 @@ html[data-layout="split"] .pdivider{display: none;}
         background: var(--bg-deep);
       }
     </style>
+    <style id="cp-native-keys">
+      /* barra nativa ativa: o #cpKeys vira espaçador invisível (mantém a altura, o editor não se mexe) */
+      html.nkeys #cpKeys { pointer-events: none; }
+      html.nkeys #cpKeys > * { visibility: hidden; }
+    </style>
     <style id="cp-cronometro">
       /* ══════════════════════════════════════════════════════════════════════ */
       /* Cronómetro do cabeçalho */
@@ -4430,6 +4435,13 @@ html[data-layout="split"] .pdivider{display: none;}
       </button>
       <button type="button" role="menuitem" data-proxy="exportExpandedCBtn">
         <svg class="ic"><use href="#i-filecode" /></svg>Exportar código expandido
+      </button>
+      <hr id="mmNkHr" style="display: none" />
+      <button type="button" role="menuitem" id="mmNk" style="display: none">
+        <svg class="ic"><use href="#i-bolt" /></svg>Teclas nativas<span class="mm-state" id="mmNkState">on</span>
+      </button>
+      <button type="button" role="menuitem" id="mmNkDbg" style="display: none">
+        <svg class="ic"><use href="#i-bolt" /></svg>Medir latência<span class="mm-state off" id="mmNkDbgState">off</span>
       </button>
     </div>
     <div class="toast" id="toast"></div>
@@ -15957,7 +15969,7 @@ html[data-layout="split"] .pdivider{display: none;}
             ta.focus({ preventScroll: true });
             ta.setSelectionRange(h.idx, h.idx);
             ta.dispatchEvent(new Event("click", { bubbles: true }));   /* fecha o popup e atualiza a barra de estado */
-            if (navigator.vibrate) navigator.vibrate(10);
+            if (!(window.CPKeys && root.classList.contains("nkeys")) && navigator.vibrate) navigator.vibrate(10);   /* nativa: vibra o Android */
             ptr.classList.remove("click"); void ptr.offsetWidth; ptr.classList.add("click");
             clearTimeout(hideT); hideT = setTimeout(hidePtr, 750);
           }
@@ -15993,15 +16005,32 @@ html[data-layout="split"] .pdivider{display: none;}
           };
           joy.addEventListener("pointerup", endJoy);
           joy.addEventListener("pointercancel", endJoy);
+          /* API para o joystick nativo (Kotlin): mesma lógica, sem eventos de ponteiro do DOM.
+             O Kotlin lê o toque e envia só a velocidade (px por frame); a seta e o "pousar cursor" continuam aqui. */
+          window.__cpkJoy = {
+            start() {
+              ta.focus({ preventScroll: true });
+              prepare();
+              J = { id: -1, ox: 0, oy: 0, t: performance.now(), moved: false };
+              vx = vy = 0; last = performance.now();
+              if (!raf) raf = requestAnimationFrame(frame);
+            },
+            vel(x, y) { if (!J) return; vx = x; vy = y; if ((x || y) && !P.on) showPtr(); },
+            end(tap) {
+              if (!J) return;
+              J = null; vx = vy = 0;
+              if (!tap) return;
+              if (!P.on) { prepare(); showPtr(); } else clickAt();
+            },
+          };
           ta.addEventListener("pointerdown", hidePtr);   /* tocar diretamente no editor cancela a seta */
           ta.addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== ta) hidePtr(); }, 0));
           window.addEventListener("resize", hidePtr);
         })();
 
-        keys.addEventListener("click", (e) => {
-          const b = e.target.closest("button[data-k]");
-          if (!b) return;
-          const k = b.dataset.k;
+        /* pressKey: lógica ÚNICA das teclas, usada pelo clique da barra web e pela barra nativa Kotlin (window.CPKeys).
+           nat = true → a vibração já foi dada pelo Android. */
+        function pressKey(k, nat) {
           if (k === "@hide") return ta.blur();
           if (k === "@run") {
             const lang = document.querySelector(".lang-tab.active")?.dataset?.lang || "c";
@@ -16009,7 +16038,7 @@ html[data-layout="split"] .pdivider{display: none;}
             return (lang === "javascript" ? runJsBtn : runCBtn).click();
           }
           ta.focus({ preventScroll: true });
-          if (navigator.vibrate) navigator.vibrate(6);
+          if (!nat && navigator.vibrate) navigator.vibrate(6);
           if (k === "↶" || k === "↷") return undoRedo(k === "↶" ? -1 : 1);
           const ev = new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true });
           ta.dispatchEvent(ev);
@@ -16018,7 +16047,106 @@ html[data-layout="split"] .pdivider{display: none;}
             ta.setRangeText(k, ta.selectionStart, ta.selectionEnd, "end");
             ta.dispatchEvent(new Event("input", { bubbles: true }));
           }
+        }
+        keys.addEventListener("click", (e) => {
+          const b = e.target.closest("button[data-k]");
+          if (!b) return;
+          pressKey(b.dataset.k, false);
+          cpkMeasure("web", performance.timeOrigin + e.timeStamp);
         });
+
+        /* ── Barra NATIVA (Kotlin) ──────────────────────────────────────────────────────────────
+           window.CPKeys é injetado pela MainActivity. No browser (ou num APK antigo) não existe e nada disto corre.
+           Quando ativa, o #cpKeys fica no layout como ESPAÇADOR invisível (mesma altura → o editor não se mexe) e a
+           barra nativa é desenhada por cima dele. Ligar/desligar: menu ⋮ → "Teclas nativas" (para comparar). */
+        const NK = window.CPKeys;
+        const nkGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (_) { return d; } };
+        const nkSet = (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} };
+        const nkOn = () => !!NK && nkGet("cp_nkeys", "1") !== "0";
+
+        /* latência: dedo levantado → próximo frame do WebView (mesmo relógio e mesma métrica nos dois caminhos) */
+        const cpkLog = { native: [], web: [] };
+        const cpkStat = (a) => {
+          if (!a.length) return "–";
+          const v = a.slice().sort((x, y) => x - y);
+          return "med " + v[v.length >> 1] + " · p95 " + v[Math.min(v.length - 1, Math.floor(v.length * 0.95))] + " ms (n=" + v.length + ")";
+        };
+        let cpkBox = null;
+        function cpkPaint() {
+          if (nkGet("cp_nkeys_dbg", "0") !== "1") { if (cpkBox) cpkBox.style.display = "none"; return; }
+          if (!cpkBox) {
+            cpkBox = document.createElement("div");
+            cpkBox.id = "cpkPerf";
+            cpkBox.style.cssText = "position:fixed;right:6px;top:calc(env(safe-area-inset-top,0px) + 44px);z-index:3000;" +
+              "background:rgba(0,0,0,.78);color:#9ff;font:11px/1.35 monospace;padding:4px 7px;border-radius:6px;white-space:pre;";
+            cpkBox.addEventListener("pointerdown", (e) => e.preventDefault());
+            cpkBox.addEventListener("click", () => { cpkLog.native.length = cpkLog.web.length = 0; cpkPaint(); });
+            document.body.appendChild(cpkBox);
+          }
+          cpkBox.style.display = "block";
+          cpkBox.textContent = "nativo " + cpkStat(cpkLog.native) + "\nweb    " + cpkStat(cpkLog.web);
+        }
+        function cpkMeasure(kind, tUp) {
+          if (nkGet("cp_nkeys_dbg", "0") !== "1") return;
+          requestAnimationFrame(() => {
+            const dt = Date.now() - tUp;
+            if (!(dt >= 0 && dt < 5000)) return;
+            const a = cpkLog[kind];
+            a.push(Math.round(dt));
+            if (a.length > 200) a.shift();
+            cpkPaint();
+          });
+        }
+
+        if (NK) {
+          window.__cpk = {
+            k(i, t) {
+              const k = i === -1 ? "@hide" : i === -2 ? "@run" : KEYS[i];
+              if (k == null) return;
+              pressKey(k, true);
+              cpkMeasure("native", t);
+            },
+          };
+          let nkLast = "";
+          function nkSync() {
+            const on = nkOn();
+            root.classList.toggle("nkeys", on);
+            let msg = "h";
+            if (on && getComputedStyle(keys).display !== "none") {
+              const r = keys.getBoundingClientRect(), b = keys.querySelector(".ck-run");
+              if (r.height > 0 && b) {
+                const bh = Math.round(b.getBoundingClientRect().height) || 40;
+                msg = [r.height.toFixed(1), bh, Math.round(r.left), Math.max(0, Math.round(window.innerWidth - r.right))].join(",");
+              }
+            }
+            if (msg === nkLast) return;
+            nkLast = msg;
+            try {
+              if (msg === "h") NK.hide();
+              else { const m = msg.split(",").map(Number); NK.show(m[0], m[1], m[2], m[3]); }
+            } catch (_) {}
+          }
+          try { NK.setKeys(JSON.stringify(KEYS)); } catch (_) {}
+          new MutationObserver(nkSync).observe(root, { attributes: true, attributeFilter: ["class", "data-layout"] });
+          window.addEventListener("resize", nkSync);
+          nkSync();
+
+          /* menu ⋮: alternar nativa/web e mostrar a medição */
+          const mmNk = document.getElementById("mmNk"), mmDbg = document.getElementById("mmNkDbg");
+          const paintMenu = () => {
+            if (!mmNk || !mmDbg) return;
+            const a = document.getElementById("mmNkState"), b = document.getElementById("mmNkDbgState");
+            a.textContent = nkOn() ? "on" : "off"; a.classList.toggle("off", !nkOn());
+            const d = nkGet("cp_nkeys_dbg", "0") === "1";
+            b.textContent = d ? "on" : "off"; b.classList.toggle("off", !d);
+          };
+          if (mmNk && mmDbg) {
+            ["mmNkHr", "mmNk", "mmNkDbg"].forEach((id) => { const el = document.getElementById(id); if (el) el.style.display = ""; });
+            mmNk.addEventListener("click", () => { nkSet("cp_nkeys", nkOn() ? "0" : "1"); nkLast = ""; nkSync(); paintMenu(); });
+            mmDbg.addEventListener("click", () => { nkSet("cp_nkeys_dbg", nkGet("cp_nkeys_dbg", "0") === "1" ? "0" : "1"); paintMenu(); cpkPaint(); });
+            paintMenu(); cpkPaint();
+          }
+        }
 
         /* ponte Android/IME: teclados virtuais enviam keydown 229/"Unidentified" e o editor ignora-os.
            Reencaminha insertText / Enter / Backspace como keydown sintético → pares, auto-indent e backspace-par funcionam. */
