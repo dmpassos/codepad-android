@@ -3584,6 +3584,9 @@ html[data-layout="split"] .pdivider{display: none;}
       /* barra nativa ativa: o #cpKeys vira espaçador invisível (mantém a altura, o editor não se mexe) */
       html.nkeys #cpKeys { pointer-events: none; }
       html.nkeys #cpKeys > * { visibility: hidden; }
+      /* editor nativo (beta): o textarea/realce/gutter web ficam por baixo, escondidos enquanto a view nativa está por cima */
+      html.nedit .code-ta { pointer-events: none; }
+      html.nedit.ne-vis .code-hl, html.nedit.ne-vis .lnums, html.nedit.ne-vis .code-ta { visibility: hidden; }
     </style>
     <style id="cp-cronometro">
       /* ══════════════════════════════════════════════════════════════════════ */
@@ -4443,6 +4446,9 @@ html[data-layout="split"] .pdivider{display: none;}
       <button type="button" role="menuitem" id="mmNkDbg" style="display: none">
         <svg class="ic"><use href="#i-bolt" /></svg>Medir latência<span class="mm-state off" id="mmNkDbgState">off</span>
       </button>
+      <button type="button" role="menuitem" id="mmNe" style="display: none">
+        <svg class="ic"><use href="#i-bolt" /></svg>Editor nativo (beta)<span class="mm-state off" id="mmNeState">off</span>
+      </button>
     </div>
     <div class="toast" id="toast"></div>
     <script>
@@ -4670,12 +4676,14 @@ html[data-layout="split"] .pdivider{display: none;}
           p[e] = t;
         }
       })();
+      window.__cpHlRules = p;   /* regras de realce (o editor nativo Kotlin usa as MESMAS regras) */
       const g = {
         lines: [],
         lang: null,
         text: null,
       };
       function hlSync(t, e) {
+        if (window.__cpNE && window.__cpNE.on) return;   /* editor nativo desenha o realce */
         if (typeof t != "string") t = o.value;
         const n = i;
         if (!e && g.text === t && g.lang === n) return;
@@ -4751,6 +4759,7 @@ html[data-layout="split"] .pdivider{display: none;}
       function b() {
         buildLineNumbers();
       }
+      window.__cpEdCore = { hl: () => hlSync(undefined, true), ln: () => buildLineNumbers(true) };
       function w() {
         a.scrollTop = o.scrollTop;
         a.scrollLeft = o.scrollLeft;
@@ -6111,7 +6120,7 @@ html[data-layout="split"] .pdivider{display: none;}
         );
       }
       function acDeferredRun() {
-        if (W || !q) return;
+        if ((window.__cpNE && window.__cpNE.on) || W || !q) return;
         const t = acGetContext(false);
         if (t) {
           if (t.type === "word") {
@@ -14873,6 +14882,7 @@ html[data-layout="split"] .pdivider{display: none;}
         );
       }
       function buildLineNumbers(t) {
+        if (window.__cpNE && window.__cpNE.on) return void window.__cpNE.markers([...Tt]);
         const e = o.value;
         let n = 1;
         for (let t = e.indexOf("\n"); t !== -1; t = e.indexOf("\n", t + 1)) n++;
@@ -14889,6 +14899,7 @@ html[data-layout="split"] .pdivider{display: none;}
         Pt = n;
       }
       function highlightDebugLine(t) {
+        if (window.__cpNE && window.__cpNE.on) window.__cpNE.dbgLine(t || 0);
         if (
           (document.querySelectorAll(".ln-row").forEach((t) => t.classList.remove("dbg-curr")), !t)
         )
@@ -15079,6 +15090,13 @@ html[data-layout="split"] .pdivider{display: none;}
           buildLineNumbers(true);
         }
       });
+      window.__cpNEbp = {
+        toggle(n) {
+          if (Tt.has(n)) Tt.delete(n);
+          else Tt.add(n);
+          buildLineNumbers(true);
+        },
+      };
       document.getElementById("debugCBtn").addEventListener("click", startDebug);
       document.getElementById("dbgClose").addEventListener("click", () => {
         Kt();
@@ -16220,7 +16238,180 @@ html[data-layout="split"] .pdivider{display: none;}
             syncHistBtns();
           }, 350);
         });
+        /* ── Editor NATIVO (beta) ────────────────────────────────────────────────────────────────────
+           window.CPEditor (injetado pela MainActivity) é um editor de código Android: texto, realce, números de linha,
+           pontos de paragem, teclas inteligentes, desfazer e a seta do joystick correm na thread de UI, sem JS no
+           caminho do toque. Aqui o <textarea> vira só uma fachada: value, selection, setRangeText, focus e blur
+           passam a falar com o editor nativo, por isso o resto do app (executar, guardar, workspace, depurador)
+           continua igual. Desligado por omissão: menu ⋮ → "Editor nativo (beta)". */
+        const NE = window.CPEditor;
+        if (NE) {
+          let neOn = false, neLast = "", neTimer = 0, neRaf = 0, neBpJson = "[]", neMo = null, neRo = null;
+          const neWrap = ta.closest(".editor-wrap") || ta.parentElement;
+          const neProps = ["value", "selectionStart", "selectionEnd", "setSelectionRange", "setRangeText", "focus", "blur"];
+          const neSel = () => { const p = String(NE.getSel()).split(","); return [+p[0] || 0, +p[1] || 0]; };
+          const neLang = () => document.querySelector(".lang-tab.active")?.dataset?.lang || "c";
+          const neNum = (v) => { const n = parseFloat(v); return isFinite(n) ? n : undefined; };
+          const neCol = (v) => {
+            const m = /rgba?\(([^)]+)\)/.exec(v || "");
+            if (!m) return undefined;
+            const q = m[1].split(/[\s,\/]+/).filter(Boolean).map(Number);
+            const a = q.length > 3 ? q[3] : 1;
+            if (!a) return undefined;
+            return ((Math.round(a * 255) << 24) | (q[0] << 16) | (q[1] << 8) | q[2]) >>> 0;
+          };
+          const neRules = () => {
+            const out = {};
+            for (const [lang, list] of Object.entries(window.__cpHlRules || {})) out[lang] = list.map((r) => ({ t: r.t, s: r.rx.source, f: r.rx.flags, o: r.open || 0 }));
+            return out;
+          };
+          /* cores e medidas lidas do CSS real (qualquer tema), para o nativo ficar igual ao editor web */
+          function neTheme() {
+            const t = {}, set = (k, v) => { if (v !== undefined) t[k] = v; };
+            const cta = getComputedStyle(ta), lnums = document.getElementById("lineNumbers"), hlBox = document.getElementById("codeHighlight");
+            set("fg", neCol(cta.color));
+            let bg;
+            for (let el = neWrap; el && bg === undefined; el = el.parentElement) bg = neCol(getComputedStyle(el).backgroundColor);
+            set("bg", bg);
+            const fs = neNum(cta.fontSize);
+            set("font", fs);
+            set("lh", neNum(cta.lineHeight) || (fs ? fs * 1.5 : undefined));
+            set("padL", neNum(cta.paddingLeft)); set("padT", neNum(cta.paddingTop));
+            if (lnums) {
+              const cl = getComputedStyle(lnums);
+              set("gBg", neCol(cl.backgroundColor)); set("gFg", neCol(cl.color)); set("gBd", neCol(cl.borderRightColor));
+              set("gW", lnums.offsetWidth || neNum(cl.width));
+              const row = document.createElement("div"); row.className = "ln-row dbg-curr"; lnums.appendChild(row);
+              const rc = getComputedStyle(row); set("dbgBg", neCol(rc.backgroundColor)); set("dbgFg", neCol(rc.color)); row.remove();
+              const dot = document.createElement("span"); dot.className = "bp-dot"; lnums.appendChild(dot);
+              set("bp", neCol(getComputedStyle(dot).backgroundColor)); dot.remove();
+            }
+            const tok = {}, seen = new Set();
+            for (const list of Object.values(window.__cpHlRules || {})) for (const r of list) seen.add(r.t);
+            for (const k of seen) {
+              const sp = document.createElement("span"); sp.className = "tok-" + k; hlBox.appendChild(sp);
+              const c = neCol(getComputedStyle(sp).color); sp.remove();
+              if (c !== undefined) tok[k] = c;
+            }
+            t.tok = tok;
+            return t;
+          }
+          function neInstall() {
+            Object.defineProperty(ta, "value", { configurable: true, get: () => NE.getText(), set: (v) => NE.setText(String(v)) });
+            Object.defineProperty(ta, "selectionStart", { configurable: true, get: () => neSel()[0], set: (v) => NE.setSel(v, Math.max(v, neSel()[1])) });
+            Object.defineProperty(ta, "selectionEnd", { configurable: true, get: () => neSel()[1], set: (v) => NE.setSel(Math.min(neSel()[0], v), v) });
+            ta.setSelectionRange = (a, b) => NE.setSel(a, b);
+            ta.setRangeText = (r, st, en, mode) => {   /* mesma semântica do HTML */
+              const [cs, ce] = neSel();
+              if (st === undefined) { st = cs; en = ce; }
+              const len = String(r).length, delta = len - (en - st);
+              let ns, ne;
+              if (mode === "end") ns = ne = st + len;
+              else if (mode === "start") ns = ne = st;
+              else if (mode === "select") { ns = st; ne = st + len; }
+              else { ns = cs > en ? cs + delta : cs > st ? st : cs; ne = ce > en ? ce + delta : ce > st ? st + len : ce; }
+              NE.replace(st, en, String(r), ns, ne);
+            };
+            ta.focus = () => NE.focus();
+            ta.blur = () => NE.blur();
+          }
+          const neUninstall = () => { for (const k of neProps) delete ta[k]; };
+
+          /* posição e visibilidade: a view nativa fica por cima do WebView, por isso sai da frente quando há
+             menu/gaveta/diálogo web a cobrir o editor (verificado com elementFromPoint) e o editor web reaparece */
+          function neSync() {
+            if (!neOn) return;
+            let msg = "h";
+            const page = document.getElementById("codePageWrap");
+            if (page && page.classList.contains("active") && getComputedStyle(neWrap).display !== "none") {
+              const r = neWrap.getBoundingClientRect();
+              if (r.width > 40 && r.height > 40) {
+                const free = document.elementFromPoint
+                  ? [[0.5, 0.5], [0.25, 0.25], [0.75, 0.75]].every(([fx, fy]) => { const el = document.elementFromPoint(r.left + r.width * fx, r.top + r.height * fy); return !el || neWrap.contains(el); })
+                  : true;
+                if (free) msg = [r.left, r.top, r.width, r.height].map((n) => n.toFixed(1)).join(",");
+              }
+            }
+            if (msg === neLast) return;
+            neLast = msg;
+            if (msg === "h") {
+              NE.hide();
+              root.classList.remove("ne-vis");
+              window.__cpNE.on = false;          /* repinta a camada web (texto atual) para aparecer sob a sobreposição */
+              try { window.__cpEdCore.hl(); window.__cpEdCore.ln(); } catch (_) {}
+              window.__cpNE.on = true;
+            } else {
+              const m = msg.split(",").map(Number);
+              NE.rect(m[0], m[1], m[2], m[3]);
+              root.classList.add("ne-vis");
+            }
+          }
+          const neSchedule = () => { if (!neRaf) neRaf = requestAnimationFrame(() => { neRaf = 0; neSync(); }); };
+
+          window.__cpNE = {
+            on: false,
+            ev(k) {   /* avisos agrupados vindos do Kotlin */
+              if (!neOn) return;
+              if (k === "input") ta.dispatchEvent(new Event("input", { bubbles: true }));
+              else if (k === "sel") ta.dispatchEvent(new Event("keyup", { bubbles: true }));
+              else if (k === "focus") ta.dispatchEvent(new Event("focus"));
+              else if (k === "blur") ta.dispatchEvent(new Event("blur"));
+            },
+            markers(list) { const j = JSON.stringify(list); if (j !== neBpJson) { neBpJson = j; NE.markers(j); } },
+            dbgLine(n) { NE.dbgLine(n | 0); },
+          };
+
+          function neEnable() {
+            if (neOn) return;
+            const v = ta.value, s0 = ta.selectionStart, e0 = ta.selectionEnd;   /* ainda as propriedades nativas do textarea */
+            if (document.activeElement === ta) ta.blur();   /* sem foco web preso no textarea (o teclado passa a ser o do nativo) */
+            neOn = true; window.__cpNE.on = true;
+            NE.configure(JSON.stringify({ lang: neLang(), rules: neRules(), theme: neTheme() }));
+            neInstall();
+            NE.setText(v); NE.setSel(Math.min(s0, v.length), Math.min(e0, v.length));
+            root.classList.add("nedit");
+            neLast = ""; neBpJson = "";
+            neMo = new MutationObserver(neSchedule);
+            neMo.observe(document.documentElement, { attributes: true, subtree: true, attributeFilter: ["class", "style", "hidden", "open", "aria-hidden"] });
+            try { neRo = new ResizeObserver(neSchedule); neRo.observe(neWrap); } catch (_) {}
+            window.addEventListener("resize", neSchedule);
+            neTimer = setInterval(neSync, 400);
+            try { window.__cpEdCore.ln(); } catch (_) {}   /* envia os pontos de paragem atuais */
+            neSync();
+          }
+          function neDisable() {
+            if (!neOn) return;
+            const v = NE.getText(), [s1, e1] = neSel();
+            clearInterval(neTimer);
+            if (neMo) neMo.disconnect();
+            if (neRo) neRo.disconnect();
+            window.removeEventListener("resize", neSchedule);
+            NE.hide();
+            neOn = false; window.__cpNE.on = false;
+            neUninstall();
+            ta.value = v;
+            try { ta.setSelectionRange(s1, e1); } catch (_) {}
+            root.classList.remove("nedit", "ne-vis");
+            neLast = "";
+            try { window.__cpEdCore.hl(); window.__cpEdCore.ln(); } catch (_) {}
+          }
+          new MutationObserver(() => { if (neOn) NE.setLang(neLang()); })
+            .observe(document.querySelector(".lang-tab")?.parentElement || document.body, { attributes: true, subtree: true, attributeFilter: ["class"] });
+          new MutationObserver(() => { if (neOn) NE.setTheme(JSON.stringify(neTheme())); })
+            .observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+          const mmNe = document.getElementById("mmNe");
+          if (mmNe) {
+            ["mmNkHr", "mmNe"].forEach((id) => { const el = document.getElementById(id); if (el) el.style.display = ""; });
+            const paint = () => { const st = document.getElementById("mmNeState"); st.textContent = neOn ? "on" : "off"; st.classList.toggle("off", !neOn); };
+            mmNe.addEventListener("click", () => { nkSet("cp_nedit", neOn ? "0" : "1"); if (neOn) neDisable(); else neEnable(); paint(); });
+            paint();
+          }
+          if (nkGet("cp_nedit", "0") === "1") neEnable();
+        }
+
         function undoRedo(dir) {
+          if (window.__cpNE && window.__cpNE.on && window.CPEditor) return void window.CPEditor.undoRedo(dir);   /* editor nativo: histórico nativo */
           clearTimeout(histTimer);
           if (hist[hi] && hist[hi].v !== ta.value) { hist = hist.slice(0, hi + 1); hist.push(snap()); hi = hist.length - 1; }
           const t = hi + dir;

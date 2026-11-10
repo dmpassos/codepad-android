@@ -34,6 +34,11 @@ class NativeKeys(
     private val bar = NativeKeyBar(activity)
     private val main = Handler(Looper.getMainLooper())
 
+    /** Quando o editor nativo está ativo, teclas e joystick vão direto para ele (sem JavaScript). */
+    var editor: NativeEditor? = null
+    private var keyList: List<String> = emptyList()
+    private var joyNative = false
+
     init {
         bar.visibility = View.GONE
         bar.host = this
@@ -50,7 +55,8 @@ class NativeKeys(
         main.post {
             try {
                 val arr = JSONArray(json)
-                bar.setKeys(List(arr.length()) { arr.getString(it) })
+                keyList = List(arr.length()) { arr.getString(it) }
+                bar.setKeys(keyList)
             } catch (t: Throwable) {
                 Log.e(TAG, "setKeys falhou", t)
             }
@@ -62,6 +68,7 @@ class NativeKeys(
         main.post {
             bar.applyMetrics(totalDp, btnDp, leftDp, rightDp)
             bar.visibility = View.VISIBLE
+            bar.bringToFront()
         }
     }
 
@@ -76,17 +83,30 @@ class NativeKeys(
         webView.evaluateJavascript(code, null)
     }
 
-    override fun onKey(index: Int, upWallMs: Long) =
-        js("window.__cpk&&window.__cpk.k($index,$upWallMs)")
+    override fun onKey(index: Int, upWallMs: Long) {
+        val ed = editor
+        if (ed != null && ed.isActive && index in keyList.indices) {
+            ed.pressKey(keyList[index])          // símbolos, Tab, desfazer/refazer: direto no editor nativo
+            return
+        }
+        js("window.__cpk&&window.__cpk.k($index,$upWallMs)")   // executar / fechar teclado e o caminho web
+    }
 
-    override fun onJoyStart() =
-        js("window.__cpkJoy&&window.__cpkJoy.start()")
+    override fun onJoyStart() {
+        val ed = editor
+        joyNative = ed != null && ed.isActive
+        if (joyNative) ed?.pointerStart() else js("window.__cpkJoy&&window.__cpkJoy.start()")
+    }
 
-    override fun onJoyVelocity(vx: Float, vy: Float) =
-        js(String.format(Locale.US, "window.__cpkJoy&&window.__cpkJoy.vel(%.2f,%.2f)", vx, vy))
+    override fun onJoyVelocity(vx: Float, vy: Float) {
+        if (joyNative) editor?.pointerVelocity(vx, vy)
+        else js(String.format(Locale.US, "window.__cpkJoy&&window.__cpkJoy.vel(%.2f,%.2f)", vx, vy))
+    }
 
-    override fun onJoyEnd(tap: Boolean, upWallMs: Long) =
-        js("window.__cpkJoy&&window.__cpkJoy.end($tap)")
+    override fun onJoyEnd(tap: Boolean, upWallMs: Long) {
+        if (joyNative) editor?.pointerEnd(tap) else js("window.__cpkJoy&&window.__cpkJoy.end($tap)")
+        joyNative = false
+    }
 
     private companion object {
         const val TAG = "CodePadKeys"

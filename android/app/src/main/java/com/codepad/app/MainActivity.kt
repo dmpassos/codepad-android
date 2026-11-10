@@ -8,28 +8,33 @@ import com.getcapacitor.BridgeActivity
 class MainActivity : BridgeActivity() {
 
     private var nativeKeys: NativeKeys? = null
+    private var nativeEditor: NativeEditor? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // plugins locais têm de ser registados ANTES do super.onCreate
         registerPlugin(LocalFolderPlugin::class.java)
         super.onCreate(savedInstanceState)
-        setupNativeKeys()
+        setupNativeUi()
     }
 
     /**
-     * Barra de símbolos + joystick nativos. Corre logo a seguir ao super.onCreate (ainda na mesma tarefa da
-     * thread de UI, antes de a página fazer commit), para que o window.CPKeys exista quando o JS arrancar.
-     * Se algo falhar, o app continua com a barra web de sempre (o JS só usa a nativa se CPKeys existir).
+     * Barra de símbolos + joystick (e o editor nativo, opcional) por cima do WebView. Corre logo a seguir ao
+     * super.onCreate (ainda na mesma tarefa da thread de UI, antes de a página fazer commit), para que window.CPKeys
+     * e window.CPEditor existam quando o JS arrancar. Se algo falhar, o app continua com o HTML de sempre.
      */
-    private fun setupNativeKeys() {
+    private fun setupNativeUi() {
         try {
             val webView = getBridge()?.webView ?: return
             val content = findViewById<FrameLayout>(android.R.id.content) ?: return
+            val editor = NativeEditor(this, webView, content)        // primeiro: a barra de teclas fica por cima
             val keys = NativeKeys(this, webView, content)
+            keys.editor = editor
+            webView.addJavascriptInterface(editor, "CPEditor")
             webView.addJavascriptInterface(keys, "CPKeys")
+            nativeEditor = editor
             nativeKeys = keys
         } catch (t: Throwable) {
-            Log.e("CodePad", "Barra nativa indisponível; a usar a barra web", t)
+            Log.e("CodePad", "UI nativa indisponível; a usar o HTML de sempre", t)
         }
     }
 }
