@@ -105,6 +105,19 @@ internal class KeyButton(ctx: Context, private val spec: Spec) : View(ctx) {
     private val rect = RectF()
     private val path = Path()
 
+    /** Altura da barra / 40 dp. Teclas maiores: o texto, os cantos e as formas crescem um pouco, não proporcionalmente. */
+    private var scale = 1f
+
+    fun applyScale(s: Float) {
+        if (s == scale) return
+        scale = s
+        textPaint.textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, spec.textDp * (1f + 0.55f * (s - 1f)), resources.displayMetrics)
+        requestLayout()
+        invalidate()
+    }
+
+    private fun grow() = 1f + 0.5f * (scale - 1f)
+
     private var down = false
     private var downX = 0f
     private var downY = 0f
@@ -118,11 +131,12 @@ internal class KeyButton(ctx: Context, private val spec: Spec) : View(ctx) {
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val g = grow()
         val w = if (spec.fixedWidthDp != null) {
-            (spec.fixedWidthDp * d).toInt()
+            (spec.fixedWidthDp * d * g).toInt()
         } else {
             val text = textPaint.measureText(spec.label)
-            max(36f * d, text + 18f * d).toInt()   // min-width 36px, padding 0 9px
+            max(36f * d * g, text + 18f * d * g).toInt()   // min-width 36px, padding 0 9px (maiores com a barra)
         }
         setMeasuredDimension(w, getDefaultSize(0, heightMeasureSpec))
     }
@@ -132,7 +146,8 @@ internal class KeyButton(ctx: Context, private val spec: Spec) : View(ctx) {
         val h = height.toFloat()
         val half = d / 2f
         rect.set(half, half, w - half, h - half)
-        val r = 8f * d
+        val g = grow()
+        val r = 8f * d * g
         fillPaint.color = if (down) spec.fillDown else spec.fill
         canvas.drawRoundRect(rect, r, r, fillPaint)
         canvas.drawRoundRect(rect, r, r, strokePaint)
@@ -147,19 +162,19 @@ internal class KeyButton(ctx: Context, private val spec: Spec) : View(ctx) {
             Kind.PLAY -> {
                 shapePaint.style = Paint.Style.FILL
                 path.reset()
-                path.moveTo(cx - 4.5f * d, cy - 6.5f * d)
-                path.lineTo(cx + 6f * d, cy)
-                path.lineTo(cx - 4.5f * d, cy + 6.5f * d)
+                path.moveTo(cx - 4.5f * d * g, cy - 6.5f * d * g)
+                path.lineTo(cx + 6f * d * g, cy)
+                path.lineTo(cx - 4.5f * d * g, cy + 6.5f * d * g)
                 path.close()
                 canvas.drawPath(path, shapePaint)
             }
             Kind.CHEVRON -> {
                 shapePaint.style = Paint.Style.STROKE
-                shapePaint.strokeWidth = 1.8f * d
+                shapePaint.strokeWidth = 1.8f * d * g
                 path.reset()
-                path.moveTo(cx - 5f * d, cy - 2f * d)
-                path.lineTo(cx, cy + 3f * d)
-                path.lineTo(cx + 5f * d, cy - 2f * d)
+                path.moveTo(cx - 5f * d * g, cy - 2f * d * g)
+                path.lineTo(cx, cy + 3f * d * g)
+                path.lineTo(cx + 5f * d * g, cy - 2f * d * g)
                 canvas.drawPath(path, shapePaint)
             }
         }
@@ -210,8 +225,8 @@ internal class KeyButton(ctx: Context, private val spec: Spec) : View(ctx) {
 /**
  * Joystick que move a seta de rato virtual do editor.
  * Aqui só se lê o toque e calcula a velocidade com a MESMA curva do HTML (zona morta de 10 %, expoente 1,6,
- * máx. 6 px por frame a 60 fps). O anel é grande (64 dp) e fica com a base alinhada às teclas, saindo por cima da
- * barra; o curso para a velocidade máxima é de 36 dp, o que dá mais precisão a baixa velocidade.
+ * máx. 6 px por frame a 60 fps). O anel ocupa toda a altura da linha de teclas (mesma altura que elas, 64 dp no
+ * telemóvel em pé); o curso para a velocidade máxima é de 36 dp, o que dá mais precisão a baixa velocidade.
  */
 internal class JoystickView(ctx: Context) : View(ctx) {
 
@@ -252,15 +267,15 @@ internal class JoystickView(ctx: Context) : View(ctx) {
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        setMeasuredDimension((CELL_DP * d).toInt(), getDefaultSize(0, heightMeasureSpec))
+        val h = getDefaultSize(0, heightMeasureSpec)
+        setMeasuredDimension(h + (12f * d).toInt(), h)      // célula = anel + 6 dp de cada lado
     }
 
-    /** Raio do anel em px: 32 dp, ou menos se a view for mais pequena. */
-    private fun ringRadius(): Float = min(RING_DP * d, min(width.toFloat() - 2f * d, height.toFloat() - 2f * d)) / 2f
+    /** O anel enche a altura da view (as teclas desenham-se com a mesma margem de meio dp). */
+    private fun ringRadius(): Float = (min(width, height).toFloat() - d) / 2f
 
-    /** Centro do anel: horizontal ao meio, base alinhada com o fundo da view (a base das teclas). */
     private fun centerX() = width / 2f
-    private fun centerY() = height - ringRadius() - d
+    private fun centerY() = height / 2f
 
     /** Só o anel (com uma folga) é zona de toque: o resto da view deixa o toque passar. */
     fun hits(x: Float, y: Float): Boolean = hypot(x - centerX(), y - centerY()) <= ringRadius() + 6f * d
@@ -278,8 +293,9 @@ internal class JoystickView(ctx: Context) : View(ctx) {
 
         val kx = cx + knobX * d
         val ky = cy + knobY * d
-        canvas.drawCircle(kx, ky, KNOB_DP * 1.55f * d, knobGlow)
-        canvas.drawCircle(kx, ky, KNOB_DP * d, knobPaint)
+        val knob = ringRadius() * KNOB_RATIO
+        canvas.drawCircle(kx, ky, knob * 1.55f, knobGlow)
+        canvas.drawCircle(kx, ky, knob, knobPaint)
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
@@ -306,7 +322,7 @@ internal class JoystickView(ctx: Context) : View(ctx) {
                 val len = hypot(dx, dy)
                 if (len > 8f) moved = true
                 val dd = min(len, FULL_TRAVEL_DP) / FULL_TRAVEL_DP
-                val visualMax = RING_DP / 2f - KNOB_DP - 4f
+                val visualMax = (ringRadius() * (1f - KNOB_RATIO) - 4f * d) / d      // dp
                 if (len > 0f) {
                     knobX = dx / len * dd * visualMax
                     knobY = dy / len * dd * visualMax
@@ -350,11 +366,9 @@ internal class JoystickView(ctx: Context) : View(ctx) {
         }
     }
 
-    internal companion object {
+    private companion object {
         const val JOY_MAX = 6f
-        const val RING_DP = 64f          // antes 36
-        const val CELL_DP = 72f          // largura da célula do joystick (antes 42)
-        const val KNOB_DP = 11f          // raio do botão (antes 6)
+        const val KNOB_RATIO = 0.34f     // raio do botão = 34 % do raio do anel (11 dp com o anel de 64 dp)
         const val FULL_TRAVEL_DP = 36f   // curso para a velocidade máxima (antes 30)
     }
 }
@@ -381,15 +395,12 @@ class NativeKeyBar(ctx: Context) : LinearLayout(ctx) {
     private val borderPaint = Paint().apply { color = KeyColors.BAR_BORDER }
     private var btnPx = (40f * d).toInt()
 
-    /** Faixa transparente por cima da barra, onde o anel do joystick sobressai (o fundo da barra começa abaixo dela). */
-    private var raisePx = 0
+    /** Fator de tamanho das teclas: altura da linha / 40 dp (40 dp era o tamanho original). */
+    private var uiScale = 1f
 
     init {
         orientation = HORIZONTAL
         gravity = Gravity.TOP
-        // O anel do joystick sai por cima do padding da barra: sem isto o Android corta-o no topo do padding.
-        clipToPadding = false
-        clipChildren = false
         setWillNotDraw(false)
         isFocusable = false
         isFocusableInTouchMode = false
@@ -420,7 +431,7 @@ class NativeKeyBar(ctx: Context) : LinearLayout(ctx) {
             LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT).apply { leftMargin = (3f * d).toInt() },
         )
 
-        addView(joy, LayoutParams(LayoutParams.WRAP_CONTENT, btnPx))   // a altura real é posta em applyMetrics
+        addView(joy, LayoutParams(LayoutParams.WRAP_CONTENT, btnPx))
         addView(sep, LayoutParams(d.toInt().coerceAtLeast(1), btnPx).apply {
             leftMargin = (5f * d).toInt()
             rightMargin = (5f * d).toInt()
@@ -467,11 +478,12 @@ class NativeKeyBar(ctx: Context) : LinearLayout(ctx) {
         strip.removeAllViews()
         keys.forEachIndexed { i, k ->
             val b = KeyButton(context, specFor(k))
+            b.applyScale(uiScale)
             b.onTap = { t -> host?.onKey(i, t) }
             strip.addView(
                 b,
                 LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT).apply {
-                    if (i < keys.size - 1) rightMargin = (3f * d).toInt()
+                    if (i < keys.size - 1) rightMargin = gapPx()
                 },
             )
         }
@@ -484,52 +496,43 @@ class NativeKeyBar(ctx: Context) : LinearLayout(ctx) {
     fun applyMetrics(totalDp: Double, btnDp: Double, leftDp: Double, rightDp: Double) {
         val total = (totalDp * d).toInt().coerceAtLeast((20f * d).toInt())
         btnPx = (btnDp * d).toInt().coerceAtLeast((24f * d).toInt())
-        // O anel do joystick tem a base alinhada com as teclas e o topo acima da barra: a diferença é a "elevação".
-        val ringPx = (JoystickView.RING_DP * d).toInt() + (2f * d).toInt()
-        val protrude = max(0, ringPx - btnPx)
-        raisePx = protrude
-        val topPad = (7f * d).toInt()
-        setPadding(((6.0 + leftDp) * d).toInt(), raisePx + topPad, ((6.0 + rightDp) * d).toInt(), 0)
-        for (v in listOf<View>(sep, scroll, end)) {
+        uiScale = (btnPx / d / 40f).coerceIn(0.6f, 2f)
+        setPadding(((6.0 + leftDp) * d).toInt(), (7f * d).toInt(), ((6.0 + rightDp) * d).toInt(), 0)
+        for (v in listOf<View>(joy, sep, scroll, end)) {
             val lp = v.layoutParams as LayoutParams
             lp.height = btnPx
             v.layoutParams = lp
         }
-        (joy.layoutParams as LayoutParams).let { lp ->
-            lp.height = btnPx + protrude
-            lp.topMargin = -protrude
-            joy.layoutParams = lp
+        // teclas maiores quando a linha é mais alta (o tamanho vem do HTML, onde o espaçador cresce na mesma medida)
+        val gap = gapPx()
+        for (i in 0 until strip.childCount) {
+            val v = strip.getChildAt(i) as KeyButton
+            v.applyScale(uiScale)
+            (v.layoutParams as LayoutParams).rightMargin = if (i < strip.childCount - 1) gap else 0
         }
-        // O espaçador do HTML continua a ter a altura "total": a elevação é só desenho extra por cima dele.
+        for (i in 0 until end.childCount) {
+            val v = end.getChildAt(i) as KeyButton
+            v.applyScale(uiScale)
+            if (i > 0) (v.layoutParams as LayoutParams).leftMargin = gap
+        }
+        strip.requestLayout()
+        end.requestLayout()
         val lp = layoutParams
         if (lp != null) {
-            lp.height = total + raisePx
+            lp.height = total
             layoutParams = lp
         }
-        minimumHeight = total + raisePx
+        minimumHeight = total
     }
+
+    /** Espaço entre teclas: 3 dp na barra original, um pouco mais com teclas maiores. */
+    private fun gapPx(): Int = (3f * d * (1f + 0.4f * (uiScale - 1f))).toInt().coerceAtLeast(d.toInt())
 
     override fun onDraw(canvas: Canvas) {
-        // o fundo só ocupa a parte de baixo; a faixa de cima é transparente (só o anel do joystick é desenhado lá)
-        val top = raisePx.toFloat()
-        barPaint.color = KeyColors.BAR
-        canvas.drawRect(0f, top, width.toFloat(), height.toFloat(), barPaint)
-        canvas.drawRect(0f, top, width.toFloat(), top + d, borderPaint)   // border-top: 1px
+        canvas.drawColor(KeyColors.BAR)
+        canvas.drawRect(0f, 0f, width.toFloat(), d, borderPaint)   // border-top: 1px
     }
 
-    private val barPaint = Paint()
-
-    /**
-     * Na faixa transparente de cima só o anel do joystick apanha toques; o resto passa para o editor/WebView
-     * por baixo (devolver false no ACTION_DOWN faz o toque seguir para a view irmã seguinte).
-     */
-    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-        if (ev.actionMasked == MotionEvent.ACTION_DOWN && ev.y < raisePx) {
-            if (!joy.hits(ev.x - joy.left, ev.y - joy.top)) return false
-        }
-        return super.dispatchTouchEvent(ev)
-    }
-
-    /** Na parte desenhada da barra, nada atravessa para o WebView que está por baixo. */
+    /** Ver como tela de toque: nada atravessa a barra para o WebView que está por baixo. */
     override fun onTouchEvent(event: MotionEvent): Boolean = true
 }

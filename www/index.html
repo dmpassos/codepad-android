@@ -3584,6 +3584,10 @@ html[data-layout="split"] .pdivider{display: none;}
       /* barra nativa ativa: o #cpKeys vira espaçador invisível (mantém a altura, o editor não se mexe) */
       html.nkeys #cpKeys { pointer-events: none; }
       html.nkeys #cpKeys > * { visibility: hidden; }
+      /* barra nativa maior: a linha de teclas tem a altura do anel do joystick (64 px; 48 px em landscape). O espaçador cresce
+         na mesma medida (o nkSync mede-o e passa-o ao Kotlin), por isso a barra não tapa as últimas linhas do editor. */
+      html.nkeys #cpKeys button, html.nkeys #cpKeys .ck-joy { height: 64px; }
+      @media (max-height: 500px) { html.nkeys #cpKeys button, html.nkeys #cpKeys .ck-joy { height: 48px; } }
       /* editor nativo (beta): o textarea/realce/gutter web ficam por baixo, escondidos enquanto a view nativa está por cima */
       html.nedit .code-ta { pointer-events: none; }
       html.nedit.ne-vis .code-hl, html.nedit.ne-vis .lnums, html.nedit.ne-vis .code-ta { visibility: hidden; }
