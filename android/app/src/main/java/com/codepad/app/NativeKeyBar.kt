@@ -387,6 +387,9 @@ class NativeKeyBar(ctx: Context) : LinearLayout(ctx) {
     init {
         orientation = HORIZONTAL
         gravity = Gravity.TOP
+        // O anel do joystick sai por cima do padding da barra: sem isto o Android corta-o no topo do padding.
+        clipToPadding = false
+        clipChildren = false
         setWillNotDraw(false)
         isFocusable = false
         isFocusableInTouchMode = false
