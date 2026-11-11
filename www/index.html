@@ -22011,6 +22011,105 @@ FIM SomaFicheiro`,
       ta.value = saved || EX["Pagamento (slide 33)"];
       paint();
     <\/script>
+  <style id="pp-mapa-mobile">
+      /* ───────── Análise no telemóvel ─────────
+         ANTES: .an era uma grelha com linhas de altura fixa. Com o "Exemplo de execução" aberto, o conteúdo ultrapassava a
+         linha e o "Mapa de análise" ficava POR CIMA do exemplo, sem scroll. AGORA: coluna normal, que faz scroll, com os
+         painéis por ordem de trabalho (Enunciado → Exemplo → Mapa → Ajudas), alvos de toque de 36-48 px e campos que crescem
+         com o texto (field-sizing, onde o WebView o suporta; senão ficam com a altura mínima e fazem scroll por dentro).
+         Só ecrã: a impressão usa as regras de body.pp. */
+      @media screen and (max-width: 900px) {
+        #mapa .an {
+          display: flex;
+          flex-direction: column;
+          align-items: stretch;
+          gap: 12px;
+          padding: 12px 12px calc(36px + env(safe-area-inset-bottom, 0px));
+          overflow-x: hidden;
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          -webkit-overflow-scrolling: touch;
+        }
+        #mapa .acol { display: contents; }
+        #mapa .acol:last-child > .ap.fill { order: 1; }   /* Enunciado */
+        #mapa #dex { order: 2; }                           /* Exemplo de execução */
+        #mapa .acol:first-child > .ap.fill { order: 3; }  /* Mapa de análise */
+        #mapa #dhelp { order: 4; }                         /* Ajudas */
+        #mapa .ap,
+        #mapa .ap.fill { flex: 0 0 auto; min-height: 0; border-radius: 14px; }
+        #mapa .ah { min-height: 48px; padding: 6px 12px 6px 14px; gap: 10px; }
+        #mapa summary.ah { min-height: 52px; }
+        #mapa .chev { width: 14px; font-size: 12px; }
+        #mapa .ab {
+          display: inline-flex; align-items: center; justify-content: center;
+          min-height: 36px; padding: 0 14px; border-radius: 10px; font-size: 11px;
+        }
+        #mapa .seg { padding: 3px; gap: 3px; border-radius: 12px; background: rgba(127, 127, 127, 0.14); }
+        #mapa .seg .ab,
+        #mapa .seg .ab:first-child,
+        #mapa .seg .ab:last-child { min-height: 34px; margin-left: 0; border-radius: 9px; }
+        #men {
+          min-height: 220px; max-height: 60vh; padding: 14px 16px;
+          font: 16px/1.65 var(--fu); field-sizing: content;
+        }
+        #mxe {
+          height: auto; min-height: 150px; max-height: 50vh; padding: 12px 14px;
+          font: 13.5px/1.6 var(--fc); field-sizing: content;
+          white-space: pre-wrap; overflow-wrap: anywhere;   /* sem linhas a fugir para fora do ecrã */
+        }
+        /* "Analisar": o enunciado em linhas, a classificar uma a uma */
+        #mapa .mterm { flex: none; min-height: 220px; max-height: none; overflow: visible; padding: 14px 12px; font-size: 14.5px; }
+        #mapa .tl { padding: 10px 12px; margin-bottom: 8px; border-radius: 0 10px 10px 0; }
+        #mapa .tl .tt { font-size: 15.5px; line-height: 1.55; }
+        #mapa .chip { padding: 0 7px; font: 700 11px/20px var(--fu); }
+        #mapa .tctl { gap: 8px; margin-top: 12px; }
+        #mapa .tctl .sp { display: none; }
+        #mapa .tg {
+          flex: 1 1 calc(50% - 4px); min-height: 44px; padding: 0 10px; border-radius: 10px; font-size: 13px;
+          text-align: left;
+        }
+        #mapa .tctl .ab { min-height: 44px; }
+        #mapa .tctl [data-a="pv"] { flex: 0 0 64px; }
+        #mapa .tctl [data-a="nx"] { flex: 1 1 0; }
+        /* os botões soltos (Dicas, Partir mais, ◂, Próxima) com aspeto de botão; "Próxima" é a ação principal */
+        #mapa .ah > .ab,
+        #mapa .tctl .ab {
+          border: 1px solid rgba(0, 212, 255, 0.38); background: rgba(0, 212, 255, 0.08); color: var(--m-hdt, var(--cyan));
+        }
+        #mapa .tctl [data-a="nx"] { border-color: var(--green); background: rgba(57, 255, 110, 0.13); color: var(--green); font-size: 12.5px; }
+        #mapa .hb { max-height: none; overflow: visible; padding: 14px 16px 18px; font-size: 13.5px; }
+      }
+      @media screen and (max-width: 900px) and (max-height: 500px) {   /* telemóvel deitado: menos altura mínima */
+        #men,
+        #mapa .mterm { min-height: 120px; }
+        #mxe { min-height: 100px; }
+      }
+      @media screen and (max-width: 680px) {
+        #mapa .g { display: flex; flex-direction: column; gap: 10px; padding: 10px; flex: none; }
+        #mapa .g > .q:nth-child(n) {
+          border: 1px solid rgba(127, 127, 127, 0.3);
+          border-left: 4px solid var(--k, var(--m-line));
+          border-radius: 12px;
+          overflow: hidden;
+          background: rgba(127, 127, 127, 0.06);
+        }
+        #mapa .q:has(> h2[data-k="e"]) { --k: var(--cyan); }
+        #mapa .q:has(> h2[data-k="r"]) { --k: var(--green); }
+        #mapa .q:has(> h2[data-k="c"]) { --k: var(--amber); }
+        #mapa .q:has(> h2[data-k="s"]) { --k: var(--purple); }
+        #mapa .q:nth-child(2) { order: -1; }   /* começa pelo fim: ① Resultados, depois ② Entrada, ③ Conhecimento, ④ Estratégia */
+        #mapa .q h2 {
+          justify-content: flex-start; padding: 12px 14px 6px; border-bottom: 0; background: transparent;
+          font: 700 12.5px var(--fu); letter-spacing: 0.14em; color: var(--k, var(--m-hdt));
+        }
+        #mapa .ord { width: 22px; height: 22px; font-size: 12px; }
+        #mapa .q p { padding: 0 14px 2px; font-size: 13px; line-height: 1.5; }
+        #mapa .q textarea {
+          min-height: 96px; max-height: 45vh; padding: 4px 14px 14px;
+          font: 16px/1.6 var(--fu); field-sizing: content;
+        }
+      }
+    </style>
   <style id="pp-focus">
       /* ───────── modo foco (mobile/compacto) ─────────
          Faixa de abas fina no topo; as barras de ferramentas de cada separador (Editor, Fluxograma,
