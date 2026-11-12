@@ -16123,6 +16123,7 @@ html[data-layout="split"] .pdivider{display: none;}
         if (NK) {
           window.__cpk = {
             k(i, t) {
+              if (ppOn()) return void ppT.k(i, t);   /* editor de pseudocódigo (iframe): ele próprio sabe que teclas são */
               const k = i === -1 ? "@hide" : i === -2 ? "@run" : KEYS[i];
               if (k == null) return;
               pressKey(k, true);
@@ -16130,11 +16131,48 @@ html[data-layout="split"] .pdivider{display: none;}
             },
           };
           let nkLast = "";
+          /* ── PseudoPad (iframe): o editor de pseudocódigo usa a MESMA barra nativa e o mesmo joystick ──
+             O iframe (srcdoc, mesma origem) regista aqui uma "api" {k, joy} e a sua lista de teclas; o Kotlin continua a falar só
+             com window.__cpk / window.__cpkJoy, que reencaminham para ele enquanto estiver em foco. */
+          const ppWrap = document.getElementById("pseudoPageWrap");
+          let ppT = null, ppM = "";
+          const ppOn = () => !!ppT && !!ppWrap && ppWrap.classList.contains("active");
+          window.__ppHost = {
+            enabled: () => nkOn(),
+            attach(api, list) {
+              ppT = api; ppM = "";
+              try { NK.setKeys(JSON.stringify(list)); } catch (_) {}
+              nkLast = ""; nkSync();
+            },
+            detach(api) {
+              if (ppT !== api) return;
+              ppT = null; ppM = "";
+              try { NK.setKeys(JSON.stringify(KEYS)); } catch (_) {}
+              nkLast = ""; nkSync();
+            },
+            metrics(total, btn, l, r) {   /* medidas do espaçador do iframe → coordenadas da janela principal */
+              const f = ppWrap && ppWrap.querySelector("iframe");
+              if (!f) return;
+              const fr = f.getBoundingClientRect();
+              ppM = [total.toFixed(1), Math.round(btn), Math.round(fr.left + l), Math.max(0, Math.round(window.innerWidth - fr.right + r))].join(",");
+              nkSync();
+            },
+          };
+          if (ppWrap) new MutationObserver(() => { if (ppT && !ppWrap.classList.contains("active")) window.__ppHost.detach(ppT); }).observe(ppWrap, { attributes: true, attributeFilter: ["class"] });
+          /* joystick: cada gesto fica com o alvo que estava ativo quando começou (editor C ou pseudocódigo) */
+          const joyMain = window.__cpkJoy;
+          let joyT = null;
+          window.__cpkJoy = {
+            start() { joyT = ppOn() && ppT.joy ? ppT.joy : joyMain; if (joyT) joyT.start(); },
+            vel(x, y) { if (joyT) joyT.vel(x, y); },
+            end(tap) { const j = joyT; joyT = null; if (j) j.end(tap); },
+          };
           function nkSync() {
             const on = nkOn();
             root.classList.toggle("nkeys", on);
             let msg = "h";
-            if (on && getComputedStyle(keys).display !== "none") {
+            if (ppOn()) msg = on && ppM ? ppM : "h";   /* editor de pseudocódigo: métricas vêm do espaçador do iframe */
+            else if (on && getComputedStyle(keys).display !== "none") {
               const r = keys.getBoundingClientRect(), b = keys.querySelector(".ck-run");
               if (r.height > 0 && b) {
                 const bh = Math.round(b.getBoundingClientRect().height) || 40;
@@ -22258,6 +22296,199 @@ FIM SomaFicheiro`,
           set(false);
         });
         document.addEventListener("change", (e) => { if (isOpen() && e.target.matches && e.target.matches("#ex,#mex")) set(false); });
+      })();
+    <\/script>
+  <style id="pp-nkeys">
+      /* ───────── barra nativa de símbolos + joystick no editor de pseudocódigo (só no app Android) ─────────
+         O app principal (Kotlin) desenha a barra POR CIMA do iframe. Aqui fica só um espaçador invisível com a mesma altura
+         (o editor não é tapado por ela) e a seta do joystick. Só se ativa com o host nativo (window.parent.__ppHost), em
+         modo compacto e com o foco no editor (#ta). Fora disso nada disto existe e o PseudoPad comporta-se como antes. */
+      html { --pkh: 64px; }
+      @media (max-height: 500px) { html { --pkh: 48px; } }
+      #ppKeys { display: none; flex: 0 0 auto; box-sizing: border-box; height: calc(var(--pkh) + 13px); pointer-events: none; }
+      html.pk-on #ppKeys { display: block; }
+      html.pk-on #mobBar { display: none !important; }   /* a barra nativa ocupa o lugar do Executar/Saída enquanto se escreve */
+      #ppPtr { position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 2000; pointer-events: none; display: none; will-change: transform; }
+      #ppPtr.on { display: block; }
+      #ppPtr svg { position: absolute; left: -1px; top: -1px; width: 18px; height: 27px; overflow: visible;
+        filter: drop-shadow(0 0 5px rgba(0, 212, 255, 0.85)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.9)); }
+      #ppPtr .cp-ring { position: absolute; left: -15px; top: -15px; width: 30px; height: 30px; border-radius: 50%;
+        border: 2px solid var(--cyan, #00d4ff); opacity: 0; }
+      #ppPtr.click .cp-ring { animation: ppRing 0.45s ease-out; }
+      @keyframes ppRing { 0% { opacity: 0.95; transform: scale(0.3); } 100% { opacity: 0; transform: scale(1.35); } }
+      #ppGhost { position: fixed; left: 0; top: 0; width: 2px; z-index: 1999; pointer-events: none; display: none; border-radius: 1px;
+        background: var(--cyan, #00d4ff); box-shadow: 0 0 8px var(--cyan, #00d4ff); will-change: transform; }
+      #ppGhost.on { display: block; }
+    </style>
+    <script>
+      (() => {
+        let H = null;
+        try { H = window.parent !== window ? window.parent.__ppHost : null; } catch (e) {}
+        const ta = document.getElementById("ta"), mob = document.getElementById("mobBar");
+        if (!H || !ta || !mob) return;
+        const root = document.documentElement, $ = (id) => document.getElementById(id);
+
+        /* símbolos do pseudocódigo, por ordem de utilidade (os que não existem no teclado do telemóvel primeiro) */
+        const PK = ["Tab", "←", "(", ")", '"', "'", "=", "≠", "≤", "≥", "<", ">", ",", "+", "-", "*", "/", "//", "↶", "↷", ".", ":", ";", "[", "]"];
+
+        const spacer = document.createElement("div");
+        spacer.id = "ppKeys";
+        spacer.setAttribute("aria-hidden", "true");
+        mob.parentNode.insertBefore(spacer, mob);
+
+        /* ── teclas: mesmo caminho do teclado (keydown → autocomplete) e depois inserir o texto ── */
+        function press(k) {
+          if (k == null) return;
+          if (k === "@hide") return ta.blur();
+          if (k === "@run") {
+            ta.blur();
+            return ($("mrun") || $("run")).click();
+          }
+          ta.focus({ preventScroll: true });
+          if (k === "↶" || k === "↷") { document.execCommand(k === "↶" ? "undo" : "redo"); return; }
+          const ev = new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true });
+          ta.dispatchEvent(ev);                    /* popup aberto: Tab/Enter/setas são do autocomplete */
+          if (ev.defaultPrevented) return;
+          const txt = k === "Tab" ? "   " : k;      /* o pseudocódigo indenta com 3 espaços */
+          if (!document.execCommand("insertText", false, txt)) {
+            ta.setRangeText(txt, ta.selectionStart, ta.selectionEnd, "end");
+            ta.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+        }
+
+        /* ── joystick: seta de rato virtual sobre o editor (mesma lógica do editor C; o Kotlin só envia a velocidade) ── */
+        const joy = (function () {
+          const ptr = document.createElement("div");
+          ptr.id = "ppPtr";
+          ptr.innerHTML = '<svg viewBox="0 0 16 24" aria-hidden="true"><path d="M1 1v17l4.2-3.8L8.3 22l2.9-1.3L8.2 14.2H14z" fill="#fff" stroke="#05080f" stroke-width="1.3" stroke-linejoin="round"/></svg><i class="cp-ring"></i>';
+          const ghost = document.createElement("div");
+          ghost.id = "ppGhost";
+          document.body.append(ptr, ghost);
+          const P = { x: 0, y: 0, on: false };
+          let J = null, raf = 0, last = 0, vx = 0, vy = 0, hideT = 0, M = null, starts = [0], txt = "";
+          const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+          function prepare() {
+            const cs = getComputedStyle(ta);
+            const c = document.createElement("canvas").getContext("2d");
+            c.font = (cs.fontStyle || "normal") + " " + (cs.fontWeight || "400") + " " + cs.fontSize + " " + cs.fontFamily;
+            M = {
+              padL: parseFloat(cs.paddingLeft) || 0, padT: parseFloat(cs.paddingTop) || 0,
+              lh: parseFloat(cs.lineHeight) || 26, cw: c.measureText("M").width || parseFloat(cs.fontSize) * 0.6,
+              tab: parseInt(cs.tabSize, 10) || 8,
+            };
+            txt = ta.value; starts = [0];
+            for (let i = txt.indexOf("\n"); i !== -1; i = txt.indexOf("\n", i + 1)) starts.push(i + 1);
+          }
+          const origin = () => { const r = ta.getBoundingClientRect(); return { x: r.left + ta.clientLeft + M.padL, y: r.top + ta.clientTop + M.padT }; };
+          function visualCol(li, idx) {
+            let col = 0;
+            for (let i = starts[li]; i < idx; i++) col += txt[i] === "\t" ? M.tab - (col % M.tab) : 1;
+            return col;
+          }
+          function lineOf(idx) {
+            let lo = 0, hi = starts.length - 1;
+            while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= idx) lo = mid; else hi = mid - 1; }
+            return lo;
+          }
+          function hit(x, y) {
+            const o = origin();
+            const li = clamp(Math.floor((y - o.y + ta.scrollTop) / M.lh), 0, starts.length - 1);
+            const ls = starts[li], le = li + 1 < starts.length ? starts[li + 1] - 1 : txt.length;
+            const target = (x - o.x + ta.scrollLeft) / M.cw;
+            let col = 0, idx = ls;
+            while (idx < le) {
+              const w = txt[idx] === "\t" ? M.tab - (col % M.tab) : 1;
+              if (target < col + w / 2) break;
+              col += w; idx++;
+            }
+            return { idx, li, col };
+          }
+          const coords = (li, col) => { const o = origin(); return { x: o.x + col * M.cw - ta.scrollLeft, y: o.y + li * M.lh - ta.scrollTop }; };
+          function bounds() {
+            const r = ta.getBoundingClientRect(), kb = spacer.getBoundingClientRect();
+            return { l: r.left + 2, t: r.top + 2, r: r.right - 2, b: (kb.height ? Math.min(r.bottom, kb.top) : r.bottom) - 2 };
+          }
+          function render() {
+            ptr.style.transform = "translate(" + P.x + "px," + P.y + "px)";
+            const h = hit(P.x, P.y), c = coords(h.li, h.col), b = bounds();
+            ghost.style.height = M.lh + "px";
+            ghost.style.transform = "translate(" + c.x + "px," + c.y + "px)";
+            ghost.style.visibility = c.y + M.lh < b.t || c.y > b.b || c.x < b.l - 2 || c.x > b.r ? "hidden" : "visible";
+          }
+          function armHide() { clearTimeout(hideT); hideT = setTimeout(hidePtr, 6000); }
+          function hidePtr() { clearTimeout(hideT); P.on = false; ptr.classList.remove("on", "click"); ghost.classList.remove("on"); }
+          function showPtr() {
+            const li = lineOf(ta.selectionStart), c = coords(li, visualCol(li, ta.selectionStart)), b = bounds();
+            P.x = clamp(c.x + 1, b.l, b.r); P.y = clamp(c.y + M.lh / 2, b.t, b.b);
+            P.on = true; ptr.classList.add("on"); ghost.classList.add("on"); render(); armHide();
+          }
+          function frame(t) {
+            if (!J) { raf = 0; return; }
+            const dt = Math.min(40, t - last) / 16.67; last = t;
+            if (vx || vy) {
+              const b = bounds();
+              P.x = clamp(P.x + vx * dt, b.l, b.r); P.y = clamp(P.y + vy * dt, b.t, b.b);
+              const eh = M.lh * 1.1;   /* encostar a seta à borda e continuar a empurrar → o editor faz scroll */
+              if (vy < 0 && P.y - b.t < eh) ta.scrollTop += vy * dt * 1.4;
+              if (vy > 0 && b.b - P.y < eh) ta.scrollTop += vy * dt * 1.4;
+              if (vx < 0 && P.x - b.l < 28) ta.scrollLeft += vx * dt * 1.4;
+              if (vx > 0 && b.r - P.x < 28) ta.scrollLeft += vx * dt * 1.4;
+              render(); armHide();
+            }
+            raf = requestAnimationFrame(frame);
+          }
+          function clickAt() {
+            const h = hit(P.x, P.y);
+            ta.focus({ preventScroll: true });
+            ta.setSelectionRange(h.idx, h.idx);
+            ta.dispatchEvent(new Event("click", { bubbles: true }));   /* fecha o popup e atualiza a barra de estado */
+            ptr.classList.remove("click"); void ptr.offsetWidth; ptr.classList.add("click");
+            clearTimeout(hideT); hideT = setTimeout(hidePtr, 750);
+          }
+          ta.addEventListener("pointerdown", hidePtr);   /* tocar diretamente no editor cancela a seta */
+          ta.addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== ta) hidePtr(); }, 0));
+          window.addEventListener("resize", hidePtr);
+          return {
+            start() {
+              ta.focus({ preventScroll: true });
+              prepare();
+              J = { t: performance.now(), moved: false };
+              vx = vy = 0; last = performance.now();
+              if (!raf) raf = requestAnimationFrame(frame);
+            },
+            vel(x, y) { if (!J) return; vx = x; vy = y; if ((x || y) && !P.on) showPtr(); },
+            end(tap) {
+              if (!J) return;
+              J = null; vx = vy = 0;
+              if (!tap) return;
+              if (!P.on) { prepare(); showPtr(); } else clickAt();
+            },
+          };
+        })();
+
+        /* ── ligação ao host: a barra nativa só aparece enquanto o foco está no editor ── */
+        const api = { k(i) { press(i === -1 ? "@hide" : i === -2 ? "@run" : PK[i]); }, joy };
+        let on = false;
+        function sync() {
+          if (!on) return;
+          const r = spacer.getBoundingClientRect();
+          if (r.height < 20) return;   /* o layout ainda não aplicou o espaçador */
+          const rowH = parseFloat(getComputedStyle(root).getPropertyValue("--pkh")) || 64;
+          H.metrics(r.height, rowH, r.left, window.innerWidth - r.right);
+        }
+        function setOn(v) {
+          v = !!v && root.dataset.host === "compact" && H.enabled();
+          if (v === on) return;
+          on = v;
+          root.classList.toggle("pk-on", on);
+          if (on) { H.attach(api, PK); requestAnimationFrame(sync); } else H.detach(api);
+        }
+        ta.addEventListener("focus", () => setOn(true));
+        ta.addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== ta) setOn(false); }, 0));
+        new MutationObserver(() => setOn(document.activeElement === ta)).observe(root, { attributes: true, attributeFilter: ["data-host"] });
+        if (window.ResizeObserver) new ResizeObserver(sync).observe(spacer);
+        window.addEventListener("resize", sync);
+        if (document.activeElement === ta) setOn(true);
       })();
     <\/script>
   </body>
