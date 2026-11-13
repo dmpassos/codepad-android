@@ -3592,6 +3592,14 @@ html[data-layout="split"] .pdivider{display: none;}
       html.nedit .code-ta { pointer-events: none; }
       html.nedit.ne-vis .code-hl, html.nedit.ne-vis .lnums, html.nedit.ne-vis .code-ta { visibility: hidden; }
     </style>
+    <style id="cp-enter-btn">
+      /* RUN C → ENTER enquanto o programa corre (barra mobile) */
+      #mobBar .mob-run.run-c.enter { background: rgba(0, 212, 255, 0.32); box-shadow: 0 0 0 1px var(--cyan), 0 0 16px rgba(0, 212, 255, 0.35); opacity: 1; }
+      #mobBar .mob-run.run-c.enter > svg,
+      #mobBar .mob-run.run-c.enter > .tx2 { display: none !important; }
+      #mobBar .mob-run.run-c.enter::after { content: "↵  Enter"; }
+      #mobBar .mob-run.run-c.enter:active { background: rgba(0, 212, 255, 0.5); }
+    </style>
     <style id="cp-cronometro">
       /* ══════════════════════════════════════════════════════════════════════ */
       /* Cronómetro do cabeçalho */
@@ -6491,6 +6499,7 @@ html[data-layout="split"] .pdivider{display: none;}
           (gt.style.display = "flex"),
           (yt.style.display = "none"),
           (_t.value = ""),
+          window.dispatchEvent(new CustomEvent("cp:input")),   /* o programa pediu dados: o botão mobile passa a ENTER */
           setTimeout(() => _t.focus(), 50),
           (mt.scrollTop = mt.scrollHeight),
           new Promise((t) => {
@@ -14792,6 +14801,7 @@ html[data-layout="split"] .pdivider{display: none;}
         yt.style.display = "none";
         const e = document.getElementById("runCBtn");
         e.disabled = true;
+        window.dispatchEvent(new CustomEvent("cp:run", { detail: true }));   /* a barra mobile passa o RUN C a ENTER */
         const n = performance.now();
         At("▶ Executando…", "sys");
         try {
@@ -14858,6 +14868,7 @@ html[data-layout="split"] .pdivider{display: none;}
           showToast("⚠ Erro de execução");
         } finally {
           e.disabled = false;
+          window.dispatchEvent(new CustomEvent("cp:run", { detail: false }));
         }
       }
       document.getElementById("runCBtn").addEventListener("click", runC);
@@ -16057,6 +16068,7 @@ html[data-layout="split"] .pdivider{display: none;}
           if (k === "@run") {
             const lang = document.querySelector(".lang-tab.active")?.dataset?.lang || "c";
             ta.blur();
+            if (lang !== "javascript" && runCBtn.classList.contains("enter")) return;   /* já está a correr: não enviar um Enter por engano */
             return (lang === "javascript" ? runJsBtn : runCBtn).click();
           }
           ta.focus({ preventScroll: true });
@@ -16235,7 +16247,32 @@ html[data-layout="split"] .pdivider{display: none;}
           runJsBtn.style.display = isC ? "none" : "flex";
         }
         toggleBtn.addEventListener("click", () => (view === "editor" ? showOutput() : showEditor()));
+        /* RUN C ⇄ ENTER: enquanto um programa C corre, o botão central é o ENTER (envia a linha do terminal), para não
+           ser preciso procurar o Enter no teclado do telemóvel. Passa a ENTER quando o programa pede dados (ou após 350 ms
+           de execução, para os programas rápidos não piscarem) e volta a RUN C quando termina. */
+        let cRunning = false, enterT = 0;
+        const isEnter = () => runCBtn.classList.contains("enter");
+        function setEnter(on) {
+          runCBtn.classList.toggle("enter", on);
+          runCBtn.setAttribute("aria-label", on ? "Enter: enviar a entrada ao programa" : "Executar C");
+          runCBtn.title = on ? "Enter" : "Executar C";
+          if (on) runCBtn.disabled = false;   /* durante a execução estava desativado */
+        }
+        window.addEventListener("cp:run", (e) => {
+          cRunning = !!e.detail;
+          clearTimeout(enterT);
+          if (cRunning) enterT = setTimeout(() => { if (cRunning) setEnter(true); }, 350);
+          else setEnter(false);
+        });
+        window.addEventListener("cp:input", () => { if (cRunning) { clearTimeout(enterT); setEnter(true); } });
+        runCBtn.addEventListener("pointerdown", (e) => { if (isEnter()) e.preventDefault(); });   /* não tira o foco do campo → o teclado fica aberto */
+        function sendEnter() {
+          if (navigator.vibrate) navigator.vibrate(8);
+          const inp = $("termInput");
+          if (inp) inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));   /* o mesmo caminho da tecla Enter */
+        }
         runCBtn.addEventListener("click", async () => {
+          if (isEnter()) return void sendEnter();
           runCBtn.disabled = dbgBtn.disabled = true;
           showOutput();
           await runC();
@@ -20450,6 +20487,7 @@ FIM SomaFicheiro`,
               const inp = r.querySelector("input");
               inp.focus();
               out.scrollTop = out.scrollHeight;
+              enterNow();   /* o programa pediu um valor: Executar → ENTER já */
               my.rej = rej;
               inp.onkeydown = (e) => {
                 if (e.key !== "Enter") return;
@@ -20462,6 +20500,7 @@ FIM SomaFicheiro`,
               };
             }),
         });
+        setRun(true);   /* o botão Executar passa a ENTER enquanto corre */
         try {
           put("▶ A executar...", "i");
           const b = parse(ta.value);
@@ -20478,6 +20517,8 @@ FIM SomaFicheiro`,
           else {
             put("✖ Erro interno: " + e.message, "e");
           }
+        } finally {
+          if (io === my) setRun(false);   /* (se já há outra execução, ela é que manda) */
         }
       };
       $("stop").onclick = () => {
@@ -21278,7 +21319,33 @@ FIM SomaFicheiro`,
         showOut = !showOut;
         mob();
       };
-      $("mrun").onclick = () => $("run").click();
+      /* Executar ⇄ ENTER: enquanto o programa corre, o botão central é o ENTER (envia o valor escrito), para não ser preciso
+         procurar o Enter no teclado do telemóvel. Passa a ENTER quando o programa pede um valor (ou após 350 ms de execução)
+         e volta a Executar quando termina. O botão não rouba o foco do campo, por isso o teclado fica aberto. */
+      let ppRunning = false, ppEnterT = 0;
+      const mrunBtn = $("mrun");
+      const ppIsEnter = () => mrunBtn.classList.contains("enter");
+      function ppSetEnter(on) {
+        mrunBtn.classList.toggle("enter", on);
+        mrunBtn.setAttribute("aria-label", on ? "Enter: enviar o valor ao programa" : "Executar");
+      }
+      function setRun(v) {
+        ppRunning = v;
+        clearTimeout(ppEnterT);
+        if (v) ppEnterT = setTimeout(() => { if (ppRunning) ppSetEnter(true); }, 350);
+        else ppSetEnter(false);
+      }
+      function enterNow() { if (ppRunning) { clearTimeout(ppEnterT); ppSetEnter(true); } }
+      mrunBtn.addEventListener("pointerdown", (e) => { if (ppIsEnter()) e.preventDefault(); });
+      $("mrun").onclick = () => {
+        if (ppIsEnter()) {
+          if (navigator.vibrate) navigator.vibrate(8);
+          const inp = out.querySelector(".inrow input");
+          if (inp) inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+          return;
+        }
+        $("run").click();
+      };
       $("mstop").onclick = () => $("stop").click();
       $("run").addEventListener("click", () => {
         if (mq.matches && !showOut) {
@@ -22298,6 +22365,13 @@ FIM SomaFicheiro`,
         document.addEventListener("change", (e) => { if (isOpen() && e.target.matches && e.target.matches("#ex,#mex")) set(false); });
       })();
     <\/script>
+  <style id="pp-enter-btn">
+      /* Executar → ENTER enquanto o programa corre (barra mobile) */
+      #mrun.enter { background: rgba(0, 212, 255, 0.28); border-color: var(--cyan, #00d4ff); color: var(--cyan, #00d4ff); box-shadow: 0 0 0 1px var(--cyan, #00d4ff), 0 0 16px rgba(0, 212, 255, 0.35); }
+      #mrun.enter > svg, #mrun.enter > span { display: none !important; }
+      #mrun.enter::after { content: "↵  Enter"; }
+      #mrun.enter:active { background: rgba(0, 212, 255, 0.45); }
+    </style>
   <style id="pp-nkeys">
       /* ───────── barra nativa de símbolos + joystick no editor de pseudocódigo (só no app Android) ─────────
          O app principal (Kotlin) desenha a barra POR CIMA do iframe. Aqui fica só um espaçador invisível com a mesma altura
@@ -22342,7 +22416,7 @@ FIM SomaFicheiro`,
           if (k === "@hide") return ta.blur();
           if (k === "@run") {
             ta.blur();
-            return ($("mrun") || $("run")).click();
+            return $("run").click();
           }
           ta.focus({ preventScroll: true });
           if (k === "↶" || k === "↷") { document.execCommand(k === "↶" ? "undo" : "redo"); return; }
