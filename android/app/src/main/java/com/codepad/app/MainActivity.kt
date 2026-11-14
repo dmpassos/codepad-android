@@ -9,12 +9,35 @@ class MainActivity : BridgeActivity() {
 
     private var nativeKeys: NativeKeys? = null
     private var nativeEditor: NativeEditor? = null
+    private var splash: NativeSplash? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // plugins locais têm de ser registados ANTES do super.onCreate
         registerPlugin(LocalFolderPlugin::class.java)
         super.onCreate(savedInstanceState)
+        setupSplash()
         setupNativeUi()
+    }
+
+    override fun onDestroy() {
+        splash?.release()
+        super.onDestroy()
+    }
+
+    /**
+     * Página de espera nativa (imagem + círculo de carregamento em Kotlin), por cima de tudo até o JS avisar que a
+     * interface está pronta (window.CPSplash.ready(), no native-bridge.js). Vem antes do resto, em bloco próprio:
+     * se a UI nativa falhar, a página de espera continua a sair sozinha (tempo máximo de 8 s).
+     */
+    private fun setupSplash() {
+        try {
+            val s = NativeSplash(this)
+            s.show()
+            getBridge()?.webView?.addJavascriptInterface(s, "CPSplash")
+            splash = s
+        } catch (t: Throwable) {
+            Log.e("CodePad", "Página de espera indisponível", t)
+        }
     }
 
     /**
